@@ -99,6 +99,7 @@ def _cmd_ask(settings: Settings, question: str) -> int:
         A process exit code (``0`` on success, ``1`` on a known failure).
     """
     from arxiv_rag.factory import build_agent
+    from arxiv_rag.llm import LLMError
 
     if not settings.anthropic_api_key:
         logger.error(
@@ -107,7 +108,18 @@ def _cmd_ask(settings: Settings, question: str) -> int:
         return 1
 
     agent = build_agent(settings)
-    state = agent.answer(question)
+    try:
+        state = agent.answer(question)
+    except LLMError as exc:
+        if exc.overloaded:
+            logger.error(
+                "The Anthropic API is temporarily overloaded (HTTP 529). "
+                "This is a transient server-side issue - wait a moment and "
+                "run the question again."
+            )
+        else:
+            logger.error("The language model call failed: %s", exc)
+        return 1
 
     print("\n=== answer ===\n", flush=True)
     print(state.get("answer", "(no answer produced)"), flush=True)

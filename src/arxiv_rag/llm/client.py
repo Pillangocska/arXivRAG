@@ -10,7 +10,7 @@ prefix to reduce repeated-context cost, and retries transient API failures
 with exponential backoff.
 """
 
-from typing import Protocol, Dict, Any
+from typing import Protocol, Optional, Dict, Any
 
 from tenacity import (
     retry_if_exception_type,
@@ -21,7 +21,53 @@ from tenacity import (
 
 
 class LLMError(RuntimeError):
-    """Raised when an LLM call fails after exhausting retries."""
+    """Raised when an LLM call fails after exhausting retries.
+
+    Attributes:
+        status_code: The HTTP status code of the underlying API error, if the
+            failure came from an API response (``None`` for non-HTTP errors
+            such as connection failures).
+        overloaded: Whether the failure was a transient server overload
+            (HTTP 529), which the caller can surface as a "retry later" hint.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        status_code: Optional[int] = None,
+        overloaded: bool = False,
+    ) -> None:
+        """Construct the error.
+
+        Args:
+            message: Human-readable description of the failure.
+            status_code: HTTP status code of the underlying API error, if any.
+            overloaded: Whether the failure was a transient 529 overload.
+        """
+        super().__init__(message)
+        self.status_code: Optional[int] = status_code
+        self.overloaded: bool = overloaded
+
+
+def _wrap_error(exc: Exception) -> LLMError:
+    """Wrap an Anthropic SDK exception in an ``LLMError`` with status context.
+
+    Extracts the HTTP status code when present and flags transient overloads
+    (HTTP 529) so callers can give a "retry later" hint rather than a generic
+    failure.
+
+    Args:
+        exc: The exception raised by the Anthropic SDK.
+
+    Returns:
+        An ``LLMError`` carrying the original message and any status context.
+    """
+    status_code: Optional[int] = getattr(exc, "status_code", None)
+    return LLMError(
+        str(exc),
+        status_code=status_code,
+        overloaded=status_code == 529,
+    )
 
 
 class LLMClient(Protocol):
@@ -172,7 +218,7 @@ class AnthropicLLMClient:
         except Exception as exc:  # noqa: BLE001 - re-raised below if final
             if _is_retryable(exc):
                 raise
-            raise LLMError(str(exc)) from exc
+            raise _wrap_error(exc) from exc
         return next(
             (b.text for b in response.content if b.type == "text"), ""
         )
@@ -229,7 +275,7 @@ class AnthropicLLMClient:
         except Exception as exc:  # noqa: BLE001 - re-raised below if final
             if _is_retryable(exc):
                 raise
-            raise LLMError(str(exc)) from exc
+            raise _wrap_error(exc) from exc
         for block in response.content:
             if block.type == "tool_use":
                 return dict(block.input)
@@ -261,7 +307,7 @@ class AnthropicLLMClient:
         except LLMError:
             raise
         except Exception as exc:  # noqa: BLE001
-            raise LLMError(str(exc)) from exc
+            raise _wrap_error(exc) from exc
 
     def complete_json(
         self,
@@ -293,4 +339,4 @@ class AnthropicLLMClient:
         except LLMError:
             raise
         except Exception as exc:  # noqa: BLE001
-            raise LLMError(str(exc)) from exc
+            raise _wrap_error(exc) from exc

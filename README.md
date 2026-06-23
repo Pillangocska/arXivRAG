@@ -47,7 +47,7 @@ flowchart TD
 
 - Python 3.12+
 - [uv](https://github.com/astral-sh/uv) for dependency management
-- Docker (for running Qdrant locally)
+- Docker
 - An Anthropic API key
 
 ## Setup
@@ -55,24 +55,27 @@ flowchart TD
 ```bash
 # 1. Clone and install dependencies
 git clone <repo-url>
-cd arxiv-hybrid-rag
+cd arXivRAG
 uv sync
 
 # 2. Configure environment
 cp .env.example .env
 # edit .env and add your ANTHROPIC_API_KEY
 
-# 3. Start Qdrant
-.\make.ps1 up          # Windows
-make up                # Linux/macOS
-
-# 4. Download the corpus
+# 3. Download the corpus
 # Download the arXiv metadata JSON from Kaggle:
 # https://www.kaggle.com/datasets/Cornell-University/arxiv
 # and place it at the path set in .env
 # (default: _data/arxiv-metadata-oai-snapshot.json)
 # Lower the MAX_PAPERS param to 5000 in .env if you are on cpu
 # and dont have a whole afternoon :)
+
+# 4. Start Qdrant
+.\make.ps1 up -Service all          # Windows
+make up SERVICE=all                 # Linux/macOS
+
+# 5. Ask a question
+.\make.ps1 run -Q "<YOUR_QUESTION>"
 ```
 
 ## Usage
