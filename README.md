@@ -70,49 +70,81 @@ docker compose up -d qdrant
 # https://www.kaggle.com/datasets/Cornell-University/arxiv
 # and place it at the path set in .env
 # (default: _data/arxiv-metadata-oai-snapshot.json)
+# Lower the MAX_PAPERS param to 5000 in .env if you are on cpu
+# and dont have a whole afternoon :)
 ```
 
 ## Usage
 
-The `Makefile` wraps the common tasks.
+There are two ways to run the application, depending on how much you want to
+containerize. Both are driven by the `Makefile` (use `make.ps1` on Windows).
+
+| Target            | Description                                  | `make` (Linux/macOS)        | `make.ps1` (Windows)              |
+|-------------------|----------------------------------------------|-----------------------------|-----------------------------------|
+| Start Qdrant      | Start the vector store container             | `make up`                   | `.\make.ps1 up`                   |
+| Stop Qdrant       | Stop the containers                          | `make down`                 | `.\make.ps1 down`                 |
+| Build app image   | Build the app container image                | `make build`                | `.\make.ps1 build`                |
+| Ingest (host)     | Build the index on the host via `uv`         | `make ingest`               | `.\make.ps1 ingest`               |
+| Ingest (Docker)   | Build the index inside the app container     | `make ingest-docker`        | `.\make.ps1 ingest-docker`        |
+| Ask (host)        | Ask a question on the host via `uv`          | `make run Q="..."`          | `.\make.ps1 run -Q "..."`         |
+| Ask (Docker)      | Ask a question inside the app container      | `make run-docker Q="..."`   | `.\make.ps1 run-docker -Q "..."`  |
+| Test              | Run the test suite (host)                    | `make test`                 | `.\make.ps1 test`                 |
+| Eval              | Generate an eval set and score it with Ragas | `make eval`                 | `.\make.ps1 eval`                 |
+
+### Option 1 — Qdrant in Docker, app on the host
+
+Run only Qdrant in a container; the app runs directly on your machine via `uv`.
+This is the lightest setup and the fastest for development — there is no app
+image to build, and the app talks to Qdrant at `http://localhost:6333` (the
+default `QDRANT_URL`).
 
 ```bash
-# Build the index (filter the corpus, embed, upsert to Qdrant)
-make ingest
-
-# Ask a question
+make up                       # start Qdrant
+make ingest                   # build the index (filter, embed, upsert to Qdrant)
 make run Q="What does the original transformer paper propose, and what recent papers improve on its attention mechanism?"
-
-# Run the test suite
-make test
-
-# Run the RAG evaluation
-make eval
 ```
 
-### Running in Docker
+On Windows:
+```powershell
+.\make.ps1 up
+.\make.ps1 ingest
+.\make.ps1 run -Q "What does the original transformer paper propose, and what recent papers improve on its attention mechanism?"
+```
 
-The app is packaged as a container image (see `Dockerfile`), and `docker-compose.yml` runs it alongside Qdrant. The `make` targets drive the containerized workflow:
+### Option 2 — Qdrant and the app both in Docker
+
+Run everything in containers. The app is packaged as a container image (see
+`Dockerfile`) and `docker-compose.yml` runs it alongside Qdrant. Use the
+`-docker` targets so the app runs inside the container instead of on the host.
 
 ```bash
-make up        # start Qdrant
-make build     # build the app image
-make ingest    # build the index (runs inside the container)
-make run Q="your question"
-make test
-make eval
+make up            # start Qdrant
+make build         # build the app image
+make ingest-docker # build the index (runs inside the container)
+make run-docker Q="What does the original transformer paper propose, and what recent papers improve on its attention mechanism?"
 ```
 
-On windows:
+On Windows:
 ```powershell
 .\make.ps1 up
 .\make.ps1 build
-.\make.ps1 ingest
-.\make.ps1 run -Q "What does the original transformer paper propose, and what recent papers improve on its attention mechanism?"
-
+.\make.ps1 ingest-docker
+.\make.ps1 run-docker -Q "What does the original transformer paper propose, and what recent papers improve on its attention mechanism?"
 ```
 
-Inside the container, Qdrant is reached at `http://qdrant:6333` (the compose service name) rather than `localhost` — this is set via the compose `environment` block, so no change to your `.env` is needed for the containerized path.
+Inside the container, Qdrant is reached at `http://qdrant:6333` (the compose
+service name) rather than `localhost` — this is set via the compose
+`environment` block, so no change to your `.env` is needed for the
+containerized path.
+
+### Testing & evaluation
+
+The test and eval targets run on the host via `uv` in both options:
+
+```bash
+make test          # run the test suite
+make eval          # generate an eval set and score it with Ragas
+```
 
 ### Configuration
 
@@ -159,4 +191,4 @@ Two layers:
 - **Unit tests** — deterministic tests for ingestion, the arXiv API tool's error handling, prompt parsing, and the retry-cap logic. LLM and network calls are mocked.
 - **RAG evaluation** — faithfulness, answer relevance, and context precision, measured with [Ragas](https://github.com/explodinggradients/ragas) over a synthetic evaluation set generated from the corpus. Agent routing and the corrective loop are tested separately.
 
-Results are written to `eval/results/`. Sample scores and example runs are in [`docs/DEMO.md`](docs/DEMO.md).
+Results are written to `eval/results/`. Sample scores and example runs are in [`docs/demo.md`](docs/demo.md).

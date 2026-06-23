@@ -20,31 +20,21 @@ The defining idea: paper content lives in a vector store and is served by RAG; c
 
 Decomposition is the backbone (it exercises both tools); corrective retrieval is a bounded safeguard layered inside each sub-query's retrieval. This hierarchy keeps the system implementable within the time budget while still demonstrating two agentic patterns.
 
-## 3. System architecture TODO
+## 3. System architecture
 
-```
-Query → Decompose → Route ─┬─→ Vector search (Qdrant) ──┐
-                           └─→ arXiv API (live) ─────────┤
-                                                         ▼
-                                              Grade relevance
-                                                   │
-                                    weak (≤1 retry) │ good
-                                          ┌─────────┴────────┐
-                                          ▼                  ▼
-                                   Reformulate & retry   Synthesize → Answer
-```
+See the [flow diagram](../README.md#how-it-works) in the README for the
+end-to-end pipeline (decompose → route → retrieve → grade → corrective
+retry → synthesize).
 
 The agent is a LangGraph state machine. A typed `AgentState` threads through every node, carrying the sub-queries, per-sub-query retrieved context, grades, retry counts, and the accumulated answer. The retry count lives in state and is checked by the conditional edge, which is how the corrective loop is bounded.
-
-**Nodes:** decompose → route → (vector_search | arxiv_api) → grade → conditional (synthesize | reformulate-and-retry) → synthesize.
 
 ## 4. Key technical decisions
 
 ### 4.1 LLM selection
 
-The workload is tiered: different calls have different difficulty and frequency, so they use different models.
+The workload is tiered: different calls have different difficulty and frequency, so they use different models. I used the Anthropic API because it's the most familiar to me.
 
-- **Decompose & grade → Claude Haiku 4.5.** Grading is a near-binary, high-frequency relevance judgment; decomposition needs reliable structured output but limited reasoning. Haiku is ~5x cheaper than Sonnet and adequate for both.
+- **Decompose & grade → Claude Haiku 4.5.** Grading is a near-binary, high-frequency relevance judgment; decomposition needs reliable structured output but limited reasoning. Haiku is ~5x cheaper than Sonnet and adequate for both. (We can use a local LLM here as well that would be cheaper but I wanted to stay in one provider ecosystem)
 - **Synthesize → Claude Sonnet 4.6.** This is the user-facing, citation-bearing answer where faithfulness matters most. Sonnet is the quality/cost sweet spot; Opus was considered and rejected because synthesis over a handful of retrieved abstracts is grounding-bound, not reasoning-bound, and does not justify the premium.
 
 Model names are configuration variables, so the provider/model is swappable without code changes.
@@ -62,27 +52,21 @@ A fully-local LLM was considered. On a 32GB laptop an 8B quantized model fits co
 
 ### 4.3 Embedding model
 
-Two local candidates were shortlisted from the MTEB retrieval leaderboard and benchmarked on the corpus: **BGE-small-en-v1.5** (small, fast, strong, 384-dim) and **Qwen3-Embedding-0.6B** (newer, near the top of the open leaderboard, laptop-runnable). The final choice is decided by an MRR/NDCG measurement on a corpus-derived eval set, not by leaderboard rank alone — leaderboard scores don't guarantee performance on a specialized domain like scientific abstracts.
+Two local candidates were shortlisted from the MTEB retrieval leaderboard and benchmarked on the corpus: **BGE-small-en-v1.5** (small, fast, strong, 384-dim) and **Qwen3-Embedding-0.6B** (newer, near the top of the open leaderboard, laptop-runnable). The final choice is decided by time constraint, I went with safer battle tested BGE-small option.
 
 Domain-specific embedders (SPECTER2, SciNCL) were considered and set aside: they are trained on the citation graph for *document<->document* similarity, whereas RAG needs *short-query↔abstract* retrieval, a different task shape.
 
 ### 4.4 Vector database
 
-**Qdrant.** The workload combines semantic search with structured metadata filtering (category, publication date, author), and Qdrant's payload filtering is first-class. It runs fully locally in Docker for the demo and the same client scales to a hosted deployment, so there is no dev -> prod rewrite.
-
-Alternatives: Chroma (simpler, but weaker filtering/scale — a more junior default); pgvector (interesting given the structured side of the workload, but doesnt scale well); FAISS (fast but a library, not a database — no built-in metadata filtering, which the use case requires); Pinecone/Weaviate Cloud (rejected — cloud dependency violates the local constraint).
+**Qdrant.** The workload combines semantic search with structured metadata filtering (category, publication date, author), and Qdrant's payload filtering is first-class. It runs fully locally in Docker for the demo and the same client scales to a hosted deployment, so there is no dev -> prod rewrite, and it scales really well. Alternatives: Chroma (simpler, but weaker filtering/scale, a more junior default); pgvector (interesting given the structured side of the workload, but doesnt scale well); FAISS (fast but a library, not a database, no built-in metadata filtering, which the use case requires); Pinecone/Weaviate Cloud (rejected, cloud dependency violates the local constraint).
 
 ### 4.5 Chunking strategy
 
-**No chunking — one abstract per record.** arXiv abstracts are short (~200–400 tokens), fit the embedding context window whole, and are self-contained semantic units authored to stand alone. Splitting them would fragment meaning (separating problem from method from result). The embedded text is `title + abstract`; `category`, `authors`, `date`, and `arxiv_id` are stored as filterable Qdrant payload, not embedded.
-
-If the corpus were extended to full-text PDFs, chunking would become necessary, recursive/semantic chunking at ~512–1024 tokens with ~10–15% overlap on section boundaries, possibly with a parent-document retriever. This is documented as a future variant, not built.
+**No chunking, one abstract per record.** arXiv abstracts are short (~200–400 tokens), fit the embedding context window whole, and are self-contained semantic units authored to stand alone. Splitting them would fragment meaning (separating problem from method from result). The embedded text is `title + abstract`; `category`, `authors`, `date`, and `arxiv_id` are stored as filterable Qdrant payload, not embedded. If the corpus were extended to full-text PDFs, chunking would become necessary, recursive/semantic chunking at ~512–1024 tokens with ~10–15% overlap on section boundaries, possibly with a parent-document retriever.
 
 ### 4.6 Framework choice
 
-**LangGraph.** The control flow is cyclic and conditional: the corrective step can route a sub-query back for re-retrieval, and that bounded loop is awkward to express in a linear (acyclic) chain but native to a state graph. LangGraph also provides explicit shared state (where the retry cap lives), an inspectable/visualizable graph for documentation, and clean composition of the decomposition and corrective behaviors.
-
-A hand-rolled orchestration was considered. For a single linear RAG pass it would be the right, lighter choice; here it would mean writing a bespoke state machine and loop guard, which is more error-prone and less readable than a framework built for exactly this. The trade-off accepted: a heavier dependency in exchange for the cyclic-flow fit.
+**LangGraph.** The control flow is cyclic and conditional: the corrective step can route a sub-query back for re-retrieval, and that bounded loop is awkward to express in a linear (acyclic) chain but native to a state graph. LangGraph also provides explicit shared state (where the retry cap lives), an inspectable/visualizable graph for documentation, and clean composition of the decomposition and corrective behaviors. A hand-rolled orchestration was considered. For a single linear RAG pass it would be the right, lighter choice; here it would mean writing a bespoke state machine and loop guard, which is more error-prone and less readable than a framework built for exactly this. The trade-off accepted: a heavier dependency in exchange for the cyclic-flow fit.
 
 ### 4.7 Agentic design
 
@@ -116,16 +100,4 @@ A hand-rolled orchestration was considered. For a single linear RAG pass it woul
 
 ## 6. How success is measured
 
-Evaluation has two layers.
-
-**Deterministic unit tests** — ingestion/field mapping, the arXiv API tool's error path, prompt parsing, and the retry-cap routing logic (the test that proves the loop is bounded). LLM and network calls are mocked.
-
-**RAG metrics (Ragas)** over a synthetic, corpus-derived eval set:
-- **Faithfulness** — is the answer grounded in retrieved context (hallucination)? Primary metric.
-- **Answer relevance** — does the answer address the question?
-- **Context precision** — were the retrieved chunks relevant (retrieval quality)?
-- (Context recall noted as a useful addition.)
-
-These localize failures: context precision/recall judge retrieval; faithfulness/answer-relevance judge generation.
-
-**Agent-workflow tests** — routing correctness (query → expected tool), decomposition correctness (expected sub-query coverage), and corrective-loop behavior (fires on weak context, stops after one retry).
+The evaluation part has two layers. **Deterministic unit tests** - ingestion/field mapping, the arXiv API tool's error path, prompt parsing, and the retry-cap routing logic (the test that proves the loop is bounded). LLM and network calls are mocked. **RAG metrics (Ragas)** over a synthetic, corpus-derived eval set: **Faithfulness** is the answer grounded in retrieved context (hallucination)? **Answer relevance** - does the answer address the question? **Context precision** - were the retrieved chunks relevant (retrieval quality)? These localize failures: context precision/recall judge retrieval; faithfulness/answer-relevance judge generation. **Agent-workflow tests** - routing correctness (query -> expected tool), decomposition correctness (expected sub-query coverage), and corrective-loop behavior (fires on weak context, stops after one retry).
