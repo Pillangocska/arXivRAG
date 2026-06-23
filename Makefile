@@ -6,7 +6,8 @@
 #     app image alongside Qdrant via docker-compose.
 #
 # Examples:
-#   make up                       # start Qdrant
+#   make up                       # start Qdrant only
+#   make up SERVICE=all           # start Qdrant and the app
 #   make ingest                   # build the index (host)
 #   make run Q="your question"    # ask a question (host)
 #   make test                     # run the test suite
@@ -14,25 +15,28 @@
 
 Q ?=
 EVAL_SIZE ?= 10
+SERVICE ?= qdrant
 
 .PHONY: help up down ingest run test eval eval-generate eval-run \
         build ingest-docker run-docker clean
 
 help:
 	@echo "Targets:"
-	@echo "  up              Start Qdrant (docker compose)."
-	@echo "  down            Stop Qdrant."
-	@echo "  ingest          Build the index on the host (uv)."
-	@echo "  run Q=\"...\"      Ask a question on the host (uv)."
-	@echo "  test            Run the test suite."
-	@echo "  eval            Generate an eval set and score it with Ragas."
-	@echo "  build           Build the app container image."
-	@echo "  ingest-docker   Build the index inside the container."
-	@echo "  run-docker Q=.. Ask a question inside the container."
+	@echo "  up [SERVICE=all]  Start services (default: qdrant only)."
+	@echo "  down              Stop all services."
+	@echo "  ingest            Build the index on the host (uv)."
+	@echo "  run Q=\"...\"       Ask a question on the host (uv)."
+	@echo "  test              Run the test suite."
+	@echo "  eval              Generate an eval set and score it with Ragas."
+	@echo "  build             Build the app container image."
+	@echo "  ingest-docker     Build the index inside the container."
+	@echo "  run-docker Q=..   Ask a question inside the container."
 
-# --- Qdrant ---
+# --- Services ---
+SERVICE_ARGS = $(if $(filter all,$(SERVICE)),qdrant app,$(SERVICE))
+
 up:
-	docker compose up -d qdrant
+	docker compose up -d $(SERVICE_ARGS)
 
 down:
 	docker compose down
@@ -61,11 +65,11 @@ build:
 	docker compose build app
 
 ingest-docker:
-	docker compose run --rm app ingest
+	docker compose run --rm --no-deps app ingest
 
 run-docker:
 	@if [ -z '$(Q)' ]; then echo 'Usage: make run-docker Q="your question"'; exit 1; fi
-	docker compose run --rm app ask "$(Q)"
+	docker compose run --rm --no-deps app ask "$(Q)"
 
 clean:
 	rm -rf .pytest_cache .ruff_cache eval/results

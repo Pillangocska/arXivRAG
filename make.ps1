@@ -6,7 +6,8 @@
     Provides the same tasks as the Makefile without requiring GNU make.
     Run targets the same way you would with make:
 
-        .\make.ps1 up
+        .\make.ps1 up                   # start Qdrant only
+        .\make.ps1 up -Service all      # start both Qdrant and the app
         .\make.ps1 ingest
         .\make.ps1 run -Q "your question"
         .\make.ps1 test
@@ -20,6 +21,9 @@
 
 .PARAMETER EvalSize
     Number of samples for the eval-generate target. Defaults to 10.
+
+.PARAMETER Service
+    Service(s) to start with the up target: qdrant (default) or all (both Qdrant and app).
 #>
 [CmdletBinding()]
 param(
@@ -33,7 +37,10 @@ param(
 
     [string]$Q = '',
 
-    [int]$EvalSize = 10
+    [int]$EvalSize = 10,
+
+    [ValidateSet('qdrant', 'app', 'all')]
+    [string]$Service = 'qdrant'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -48,23 +55,30 @@ function Invoke-Step {
 
 function Show-Help {
     Write-Host 'Targets:'
-    Write-Host '  up              Start Qdrant (docker compose).'
-    Write-Host '  down            Stop Qdrant.'
-    Write-Host '  ingest          Build the index on the host (uv).'
-    Write-Host '  run -Q "..."    Ask a question on the host (uv).'
-    Write-Host '  test            Run the test suite.'
-    Write-Host '  eval            Generate an eval set and score it with Ragas.'
-    Write-Host '  build           Build the app container image.'
-    Write-Host '  ingest-docker   Build the index inside the container.'
-    Write-Host '  run-docker -Q . Ask a question inside the container.'
-    Write-Host '  clean           Remove caches and eval results.'
+    Write-Host '  up [-Service qdrant|all]      Start services (default: qdrant only).'
+    Write-Host '  down                          Stop all services.'
+    Write-Host '  ingest                        Build the index on the host (uv).'
+    Write-Host '  run -Q "..."                  Ask a question on the host (uv).'
+    Write-Host '  test                          Run the test suite.'
+    Write-Host '  eval                          Generate an eval set and score it with Ragas.'
+    Write-Host '  build                         Build the app container image.'
+    Write-Host '  ingest-docker                 Build the index inside the container.'
+    Write-Host '  run-docker -Q "..."           Ask a question inside the container.'
+    Write-Host '  clean                         Remove caches and eval results.'
 }
 
 switch ($Target) {
     'help' { Show-Help }
 
-    # --- Qdrant ---
-    'up'   { Invoke-Step { docker compose up -d qdrant } }
+    # --- Services ---
+    'up' {
+        $services = switch ($Service) {
+            'qdrant' { @('qdrant') }
+            'app'    { @('qdrant', 'app') }
+            'all'    { @('qdrant', 'app') }
+        }
+        Invoke-Step { docker compose up -d $services }
+    }
     'down' { Invoke-Step { docker compose down } }
 
     # --- Host (uv) workflow ---
@@ -94,14 +108,14 @@ switch ($Target) {
     # --- Containerized workflow ---
     'build' { Invoke-Step { docker compose build app } }
 
-    'ingest-docker' { Invoke-Step { docker compose run --rm app ingest } }
+    'ingest-docker' { Invoke-Step { docker compose run --rm --no-deps app ingest } }
 
     'run-docker' {
         if ([string]::IsNullOrWhiteSpace($Q)) {
             Write-Host 'Usage: .\make.ps1 run-docker -Q "your question"'
             exit 1
         }
-        Invoke-Step { docker compose run --rm app ask $Q }
+        Invoke-Step { docker compose run --rm --no-deps app ask $Q }
     }
 
     # --- Cleanup ---

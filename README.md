@@ -63,7 +63,8 @@ cp .env.example .env
 # edit .env and add your ANTHROPIC_API_KEY
 
 # 3. Start Qdrant
-docker compose up -d qdrant
+.\make.ps1 up          # Windows
+make up                # Linux/macOS
 
 # 4. Download the corpus
 # Download the arXiv metadata JSON from Kaggle:
@@ -79,17 +80,18 @@ docker compose up -d qdrant
 There are two ways to run the application, depending on how much you want to
 containerize. Both are driven by the `Makefile` (use `make.ps1` on Windows).
 
-| Target            | Description                                  | `make` (Linux/macOS)        | `make.ps1` (Windows)              |
-|-------------------|----------------------------------------------|-----------------------------|-----------------------------------|
-| Start Qdrant      | Start the vector store container             | `make up`                   | `.\make.ps1 up`                   |
-| Stop Qdrant       | Stop the containers                          | `make down`                 | `.\make.ps1 down`                 |
-| Build app image   | Build the app container image                | `make build`                | `.\make.ps1 build`                |
-| Ingest (host)     | Build the index on the host via `uv`         | `make ingest`               | `.\make.ps1 ingest`               |
-| Ingest (Docker)   | Build the index inside the app container     | `make ingest-docker`        | `.\make.ps1 ingest-docker`        |
-| Ask (host)        | Ask a question on the host via `uv`          | `make run Q="..."`          | `.\make.ps1 run -Q "..."`         |
-| Ask (Docker)      | Ask a question inside the app container      | `make run-docker Q="..."`   | `.\make.ps1 run-docker -Q "..."`  |
-| Test              | Run the test suite (host)                    | `make test`                 | `.\make.ps1 test`                 |
-| Eval              | Generate an eval set and score it with Ragas | `make eval`                 | `.\make.ps1 eval`                 |
+| Target                   | Description                                  | `make` (Linux/macOS)        | `make.ps1` (Windows)                        |
+|--------------------------|----------------------------------------------|-----------------------------|---------------------------------------------|
+| Build app image          | Build the app container image                | `make build`                | `.\make.ps1 build`                          |
+| Start Qdrant             | Start the vector store container             | `make up`                   | `.\make.ps1 up`                             |
+| Start Qdrant + app       | Start both services                          | `make up SERVICE=all`       | `.\make.ps1 up -Service all`                |
+| Stop all services        | Stop and remove containers                   | `make down`                 | `.\make.ps1 down`                           |
+| Ingest (host)            | Build the index on the host via `uv`         | `make ingest`               | `.\make.ps1 ingest`                         |
+| Ingest (Docker)          | Build the index inside the app container     | `make ingest-docker`        | `.\make.ps1 ingest-docker`                  |
+| Ask (host)               | Ask a question on the host via `uv`          | `make run Q="..."`          | `.\make.ps1 run -Q "..."`                   |
+| Ask (Docker)             | Ask a question inside the app container      | `make run-docker Q="..."`   | `.\make.ps1 run-docker -Q "..."`            |
+| Test                     | Run the test suite (host)                    | `make test`                 | `.\make.ps1 test`                           |
+| Eval                     | Generate an eval set and score it with Ragas | `make eval`                 | `.\make.ps1 eval`                           |
 
 ### Option 1 — Qdrant in Docker, app on the host
 
@@ -99,8 +101,8 @@ image to build, and the app talks to Qdrant at `http://localhost:6333` (the
 default `QDRANT_URL`).
 
 ```bash
-make up                       # start Qdrant
-make ingest                   # build the index (filter, embed, upsert to Qdrant)
+make up        # start Qdrant
+make ingest    # build the index (filter, embed, upsert to Qdrant)
 make run Q="What does the original transformer paper propose, and what recent papers improve on its attention mechanism?"
 ```
 
@@ -118,16 +120,16 @@ Run everything in containers. The app is packaged as a container image (see
 `-docker` targets so the app runs inside the container instead of on the host.
 
 ```bash
-make up            # start Qdrant
 make build         # build the app image
-make ingest-docker # build the index (runs inside the container)
+make up            # start Qdrant
+make ingest-docker # build the index (runs inside the container, uses running Qdrant)
 make run-docker Q="What does the original transformer paper propose, and what recent papers improve on its attention mechanism?"
 ```
 
 On Windows:
 ```powershell
-.\make.ps1 up
 .\make.ps1 build
+.\make.ps1 up
 .\make.ps1 ingest-docker
 .\make.ps1 run-docker -Q "What does the original transformer paper propose, and what recent papers improve on its attention mechanism?"
 ```
