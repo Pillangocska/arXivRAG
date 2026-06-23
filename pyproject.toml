@@ -14,6 +14,7 @@ dependencies = [
     "pydantic-settings==2.7.0",
     "python-dotenv==1.0.1",
     "tenacity==9.0.0",
+    "langchain-huggingface>=0.3.1",
 ]
 
 # Dev and eval tooling live in dependency groups so `uv sync` installs them by

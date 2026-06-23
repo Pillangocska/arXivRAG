@@ -10,7 +10,7 @@
         .\make.ps1 ingest
         .\make.ps1 run -Q "your question"
         .\make.ps1 test
-        .\make.ps1 eval -EvalSize 20
+        .\make.ps1 eval -EvalSize 10
 
 .PARAMETER Target
     The task to run. See .\make.ps1 help for the full list.
@@ -19,7 +19,7 @@
     The question passed to the run / run-docker targets.
 
 .PARAMETER EvalSize
-    Number of samples for the eval-generate target. Defaults to 20.
+    Number of samples for the eval-generate target. Defaults to 10.
 #>
 [CmdletBinding()]
 param(
@@ -33,7 +33,7 @@ param(
 
     [string]$Q = '',
 
-    [int]$EvalSize = 20
+    [int]$EvalSize = 10
 )
 
 $ErrorActionPreference = 'Stop'

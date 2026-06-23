@@ -1,7 +1,5 @@
 # Architecture Decision Record — arXiv Hybrid RAG Agent
 
-> Draft scaffold. The decisions below were made deliberately; this document records the reasoning, the alternatives considered, and the trade-offs accepted.
-
 ## 1. Context & problem
 
 Researchers and practitioners need to answer questions over scientific literature that mix two fundamentally different information needs:
@@ -11,11 +9,9 @@ Researchers and practitioners need to answer questions over scientific literatur
 
 A pure RAG system handles (1) and fails (2); a question that bundles both ("what does paper X claim, and what newer work improves on it?") cannot be answered by a single retrieval pass. This motivated a hybrid design where retrieval is one tool among several that an agent orchestrates.
 
-**Domain:** scientific literature (arXiv). **Corpus:** the Kaggle arXiv metadata dataset (abstracts), scoped to a single category for a laptop-friendly index.
+**Domain:** scientific literature (arXiv). **Corpus:** the Kaggle arXiv metadata dataset (abstracts), scoped to a single category because of hardware constraints.
 
-## 2. Approach chosen
-
-**Option C — Hybrid RAG + Agentic.**
+## 2. Approach chosen - Hybrid RAG + Agentic
 
 The defining idea: paper content lives in a vector store and is served by RAG; current/structured state is served by the live arXiv API; an agent decides, per sub-question, which source is needed. The agent adds two behaviors a linear RAG pipeline lacks:
 
@@ -24,7 +20,7 @@ The defining idea: paper content lives in a vector store and is served by RAG; c
 
 Decomposition is the backbone (it exercises both tools); corrective retrieval is a bounded safeguard layered inside each sub-query's retrieval. This hierarchy keeps the system implementable within the time budget while still demonstrating two agentic patterns.
 
-## 3. System architecture
+## 3. System architecture TODO
 
 ```
 Query → Decompose → Route ─┬─→ Vector search (Qdrant) ──┐
@@ -57,30 +53,30 @@ Model names are configuration variables, so the provider/model is swappable with
 
 ### 4.2 Local embeddings vs. API generation
 
-Embeddings run **locally**; generation uses the **API**. This split is deliberate:
+Embeddings run **locally**; generation uses the **API**.
 
-- Embeddings are quality-tolerant and high-volume — running them locally removes per-query embedding cost and keeps the retrieval path working even if the LLM API is unavailable.
-- Generation is quality-sensitive — the synthesis step needs the faithfulness of a frontier model.
+- Embeddings are quality-tolerant and high-volume — running them locally removes per-query embedding cost and keeps the retrieval path working even if the LLM API is unavailable or vica-versa.
+- Generation is quality-sensitive, the synthesis step needs the faithfulness of a frontier model.
 
-A fully-local LLM was considered. On a 32GB laptop an 8B quantized model fits comfortably alongside Docker and Qdrant, but (a) the 8B tier is well below Sonnet on faithful, grounded generation, and the 32B+ models that would close the gap strain 32GB and run slowly on CPU; (b) local CPU generation is ~20–60s per answer vs. a few seconds on the API. API generation was chosen for quality and latency. The architecture remains provider-agnostic, so a local model (e.g. via Ollama) is a config change — this is also the data-privacy / graceful-degradation story.
+A fully-local LLM was considered. On a 32GB laptop an 8B quantized model fits comfortably alongside Docker and Qdrant, but (a) the 8B tier is well below Sonnet on faithful, grounded generation, and the 32B+ models that would close the gap strain 32GB and run slowly on CPU; (b) local CPU generation is ~20–60s per answer vs. a few seconds on the API. API generation was chosen for quality and latency. The architecture remains provider-agnostic, so a local model (e.g. via Ollama) is a config change (this is also the data-privacy / graceful-degradation story).
 
 ### 4.3 Embedding model
 
 Two local candidates were shortlisted from the MTEB retrieval leaderboard and benchmarked on the corpus: **BGE-small-en-v1.5** (small, fast, strong, 384-dim) and **Qwen3-Embedding-0.6B** (newer, near the top of the open leaderboard, laptop-runnable). The final choice is decided by an MRR/NDCG measurement on a corpus-derived eval set, not by leaderboard rank alone — leaderboard scores don't guarantee performance on a specialized domain like scientific abstracts.
 
-Domain-specific embedders (SPECTER2, SciNCL) were considered and set aside: they are trained on the citation graph for *document↔document* similarity, whereas RAG needs *short-query↔abstract* retrieval — a different task shape. Noted as possible future work.
+Domain-specific embedders (SPECTER2, SciNCL) were considered and set aside: they are trained on the citation graph for *document<->document* similarity, whereas RAG needs *short-query↔abstract* retrieval, a different task shape.
 
 ### 4.4 Vector database
 
-**Qdrant.** The workload combines semantic search with structured metadata filtering (category, publication date, author), and Qdrant's payload filtering is first-class. It runs fully locally in Docker for the demo and the same client scales to a hosted deployment, so there is no dev→prod rewrite.
+**Qdrant.** The workload combines semantic search with structured metadata filtering (category, publication date, author), and Qdrant's payload filtering is first-class. It runs fully locally in Docker for the demo and the same client scales to a hosted deployment, so there is no dev -> prod rewrite.
 
-Alternatives: Chroma (simpler, but weaker filtering/scale — a more junior default); pgvector (interesting given the structured side of the workload, but more setup than needed); FAISS (fast but a library, not a database — no built-in metadata filtering, which the use case requires); Pinecone/Weaviate Cloud (rejected — cloud dependency violates the local constraint).
+Alternatives: Chroma (simpler, but weaker filtering/scale — a more junior default); pgvector (interesting given the structured side of the workload, but doesnt scale well); FAISS (fast but a library, not a database — no built-in metadata filtering, which the use case requires); Pinecone/Weaviate Cloud (rejected — cloud dependency violates the local constraint).
 
 ### 4.5 Chunking strategy
 
 **No chunking — one abstract per record.** arXiv abstracts are short (~200–400 tokens), fit the embedding context window whole, and are self-contained semantic units authored to stand alone. Splitting them would fragment meaning (separating problem from method from result). The embedded text is `title + abstract`; `category`, `authors`, `date`, and `arxiv_id` are stored as filterable Qdrant payload, not embedded.
 
-If the corpus were extended to full-text PDFs, chunking would become necessary — recursive/semantic chunking at ~512–1024 tokens with ~10–15% overlap on section boundaries, possibly with a parent-document retriever. This is documented as a future variant, not built.
+If the corpus were extended to full-text PDFs, chunking would become necessary, recursive/semantic chunking at ~512–1024 tokens with ~10–15% overlap on section boundaries, possibly with a parent-document retriever. This is documented as a future variant, not built.
 
 ### 4.6 Framework choice
 
@@ -111,6 +107,7 @@ A hand-rolled orchestration was considered. For a single linear RAG pass it woul
 - Add a hybrid local/API deployment (local grader, API synthesizer).
 - A reranking stage between retrieval and grading.
 - Scale the index (full corpus; production embedding/indexing pipeline).
+- And many more...
 
 **Production considerations identified:**
 - Expose the agent behind a FastAPI service with async endpoints and a job queue for long-running multi-hop queries (out of scope here per the brief's guidance against non-trivial interfaces).
@@ -133,16 +130,14 @@ These localize failures: context precision/recall judge retrieval; faithfulness/
 
 **Agent-workflow tests** — routing correctness (query → expected tool), decomposition correctness (expected sub-query coverage), and corrective-loop behavior (fires on weak context, stops after one retry).
 
-**In production**, faithfulness is the primary guardrail because it works identically offline and online (it needs only the answer + retrieved context, no ground truth). The offline suite serves as a pre-deploy regression gate; online health is tracked via retry rate, retrieval-score distributions, user feedback, and latency/cost.
-
 ## 7. Summary of decisions
 
 | Decision        | Choice                        | Primary reason                                  |
 |-----------------|-------------------------------|-------------------------------------------------|
 | Approach        | Hybrid RAG + Agentic          | Two genuine information needs (content vs. live) |
 | Orchestration   | LangGraph                     | Cyclic, conditional control flow                 |
-| Vector store    | Qdrant (local)                | Native metadata filtering + local→prod parity    |
-| Embeddings      | BGE-small / Qwen3-0.6B (local)| Quality at laptop scale; decided by eval         |
+| Vector store    | Qdrant (local)                | Native metadata filtering + local->prod parity   |
+| Embeddings      | BGE-small (local)             | Quality at laptop scale, solid for POCs          |
 | Chunking        | None (one abstract = one unit)| Abstracts are short, self-contained              |
 | LLM (synthesis) | Sonnet 4.6                    | Faithfulness on the user-facing answer           |
 | LLM (decompose/grade) | Haiku 4.5               | Cheap, high-frequency, simple judgments          |

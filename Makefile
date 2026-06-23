@@ -13,7 +13,7 @@
 #   make eval                     # generate eval set + score with Ragas
 
 Q ?=
-EVAL_SIZE ?= 20
+EVAL_SIZE ?= 10
 
 .PHONY: help up down ingest run test eval eval-generate eval-run \
         build ingest-docker run-docker clean

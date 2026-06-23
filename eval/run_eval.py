@@ -22,6 +22,8 @@ logger = get_logger(__name__)
 DEFAULT_INPUT = "eval/eval_set.json"
 RESULTS_DIR = "eval/results"
 
+METRIC_NAMES = ("faithfulness", "answer_relevancy", "context_precision")
+
 
 def _collect_contexts(sub_queries: List[Any]) -> List[str]:
     """Flatten retrieved context across sub-queries into Ragas's format.
@@ -97,11 +99,17 @@ def _score(records: List[Dict[str, Any]], settings: Settings) -> Any:
         HuggingFaceEmbeddings,
     )
 
+    # Faithfulness asks the judge to emit one verdict per atomic statement in
+    # the answer as a single JSON array; for long, multi-paragraph cited
+    # answers that list can be sizeable. A low cap truncates the JSON
+    # mid-generation, which Ragas surfaces as LLMDidNotFinishException and then
+    # drops the row (skewing the average, or yielding NaN if every row fails).
+    # Give the judge ample output room.
     judge = LangchainLLMWrapper(
         ChatAnthropic(
             model=settings.synth_model,
             api_key=settings.anthropic_api_key,
-            max_tokens=1024,
+            max_tokens=4096,
         )
     )
     # Reuse the local embedding model for answer-relevance scoring so the
@@ -117,6 +125,93 @@ def _score(records: List[Dict[str, Any]], settings: Settings) -> Any:
         llm=judge,
         embeddings=embeddings,
     )
+
+
+def _build_per_row(result: Any) -> List[Dict[str, Any]]:
+    """Assemble a per-question record of inputs alongside each metric score.
+
+    Joins the agent's question, answer, retrieved contexts, and reference with
+    the per-row Ragas scores so a low aggregate can be traced to the specific
+    questions dragging it down. A failed judge call surfaces as ``None`` for
+    that metric rather than being hidden.
+
+    Args:
+        result: The Ragas ``EvaluationResult`` returned by ``_score``.
+
+    Returns:
+        One dict per eval item, sorted by faithfulness ascending (worst first)
+        so the rows most worth inspecting appear at the top. Returns an empty
+        list if the result cannot be converted to a DataFrame.
+    """
+    import math
+
+    try:
+        frame = result.to_pandas()
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Could not build per-row dump: %s", exc)
+        return []
+
+    def _clean(value: Any) -> Any:
+        """Coerce NaN floats to ``None`` so the JSON stays valid."""
+        if isinstance(value, float) and math.isnan(value):
+            return None
+        return value
+
+    rows: List[Dict[str, Any]] = []
+    for record in frame.to_dict(orient="records"):
+        contexts = record.get("retrieved_contexts") or []
+        rows.append(
+            {
+                "question": record.get("user_input"),
+                "answer": record.get("response"),
+                "reference": record.get("reference"),
+                "retrieved_contexts": list(contexts),
+                "n_contexts": len(contexts),
+                "scores": {
+                    metric: _clean(record.get(metric))
+                    for metric in METRIC_NAMES
+                },
+            }
+        )
+
+    def _sort_key(row: Dict[str, Any]) -> float:
+        """Order by faithfulness ascending; push missing scores to the top."""
+        score = row["scores"].get("faithfulness")
+        return float("-inf") if score is None else score
+
+    rows.sort(key=_sort_key)
+    return rows
+
+
+def _print_per_row(rows: List[Dict[str, Any]]) -> None:
+    """Print a compact per-question table, worst faithfulness first.
+
+    Shows each question with its three metric scores so low-scoring rows are
+    visible at a glance; the full answer and contexts live in ``per_row.json``.
+
+    Args:
+        rows: The per-row records from ``_build_per_row``.
+    """
+    if not rows:
+        return
+
+    def _fmt(value: Any) -> str:
+        """Render a score as a fixed-width string, or ``--`` if missing."""
+        return f"{value:.3f}" if isinstance(value, float) else "  -- "
+
+    print("\n=== Per-question scores (worst faithfulness first) ===")
+    print(f"  {'faith':>6} {'ans_rel':>8} {'ctx_prec':>9}  question")
+    for row in rows:
+        scores = row["scores"]
+        question = (row.get("question") or "").replace("\n", " ")
+        if len(question) > 80:
+            question = question[:77] + "..."
+        print(
+            f"  {_fmt(scores.get('faithfulness')):>6} "
+            f"{_fmt(scores.get('answer_relevancy')):>8} "
+            f"{_fmt(scores.get('context_precision')):>9}  {question}",
+            flush=True,
+        )
 
 
 def main() -> int:
@@ -157,17 +252,61 @@ def main() -> int:
         result, "_repr_dict"
     ) else dict(result)
 
+    # Each metric is averaged (via nanmean) over only the rows that scored
+    # successfully; a row whose judge call failed becomes NaN and is silently
+    # dropped from that metric's average. Count the rows that actually
+    # contributed so a partial run is visible rather than masquerading as a
+    # clean score over all ``n`` items.
+    valid_counts: Dict[str, int] = {}
+    if hasattr(result, "_scores_dict"):
+        import math
+
+        for metric, values in result._scores_dict.items():
+            valid_counts[metric] = sum(
+                1 for v in values if v is not None and not math.isnan(v)
+            )
+
+    per_row = _build_per_row(result)
+
     os.makedirs(RESULTS_DIR, exist_ok=True)
     output = os.path.join(RESULTS_DIR, "scores.json")
     with open(output, "w", encoding="utf-8") as handle:
         json.dump(
-            {"scores": scores, "n": len(items)}, handle, indent=2
+            {
+                "scores": scores,
+                "n": len(items),
+                "valid": valid_counts,
+                "per_row": per_row,
+            },
+            handle,
+            indent=2,
+            ensure_ascii=False,
         )
 
     print("\n=== Ragas scores ===", flush=True)
     for metric, value in scores.items():
-        print(f"  {metric}: {value:.3f}", flush=True)
-    logger.info("Wrote results to %s", output)
+        n_valid = valid_counts.get(metric, len(items))
+        suffix = (
+            f"  (over {n_valid}/{len(items)} rows)"
+            if n_valid < len(items)
+            else ""
+        )
+        print(f"  {metric}: {value:.3f}{suffix}", flush=True)
+        if n_valid < len(items):
+            logger.warning(
+                "%s scored over only %d/%d rows; %d judge call(s) failed "
+                "(likely truncated output).",
+                metric,
+                n_valid,
+                len(items),
+                len(items) - n_valid,
+            )
+
+    _print_per_row(per_row)
+
+    logger.info(
+        "Wrote results (with per-question detail) to %s", output
+    )
     return 0
 
 

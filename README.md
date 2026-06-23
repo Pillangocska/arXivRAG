@@ -2,7 +2,7 @@
 
 A research assistant over arXiv papers that combines retrieval-augmented generation with an agentic workflow. Given a question, it decomposes the query into sub-questions, routes each to the right source (semantic search over a local vector store, or the live arXiv API) grades the retrieved context, retries once if the context is weak, and synthesizes a cited answer.
 
-The system is built around a single architectural idea: paper *content* lives in a vector store and is answered by RAG, while *current state* (what was published recently, papers by an author, lookups by ID) is answered by a live API. An agent decides which a given sub-question needs.
+The paper *content* lives in a vector store and is answered by RAG, while *current state* (what was published recently, papers by an author, lookups by ID) is answered by a live API. An agent decides which a given sub-question needs.
 
 For the reasoning behind each technical decision, see [`docs/ADR.md`](docs/ADR.md).
 
@@ -159,15 +159,4 @@ Two layers:
 - **Unit tests** — deterministic tests for ingestion, the arXiv API tool's error handling, prompt parsing, and the retry-cap logic. LLM and network calls are mocked.
 - **RAG evaluation** — faithfulness, answer relevance, and context precision, measured with [Ragas](https://github.com/explodinggradients/ragas) over a synthetic evaluation set generated from the corpus. Agent routing and the corrective loop are tested separately.
 
-Results are written to `eval/results/`. Sample scores and example runs are in [`docs/demo.md`](docs/demo.md).
-
-## Cost
-
-The demo runs at a few cents per query, dominated by the synthesis call. Embeddings are local (no API cost). Prompt caching is enabled on the stable prompt prefixes to reduce repeated-context cost. Per-token rates are documented in the ADR.
-
-## Limitations & future work
-
-- The corpus is scoped to a single arXiv category to keep indexing laptop-friendly; scaling to the full corpus is discussed in the ADR.
-- Sub-queries run sequentially; independent sub-queries could be parallelized to cut latency.
-- The evaluation set is synthetic; a hand-curated multi-hop set would strengthen it.
-- See the ADR for the full list of trade-offs and planned improvements.
+Results are written to `eval/results/`. Sample scores and example runs are in [`docs/DEMO.md`](docs/DEMO.md).

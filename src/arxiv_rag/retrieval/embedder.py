@@ -9,6 +9,11 @@ model — or a different backend entirely — is a single-class change (see
 
 from typing import Protocol, Sequence, List
 import threading
+import time
+
+from arxiv_rag.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 class Embedder(Protocol):
@@ -22,6 +27,15 @@ class Embedder(Protocol):
     @property
     def dim(self) -> int:
         """The dimensionality of the produced vectors."""
+        ...
+
+    def warmup(self) -> None:
+        """Eagerly initialize any lazily-loaded resources.
+
+        Optional for callers to invoke; implementations that have nothing to
+        preload may make this a no-op. Calling it moves one-time setup cost
+        (e.g. loading model weights) out of the first embedding request.
+        """
         ...
 
     def embed_documents(self, texts: Sequence[str]) -> List[List[float]]:
@@ -88,6 +102,10 @@ class SentenceTransformerEmbedder:
                 return self._model
             from sentence_transformers import SentenceTransformer
 
+            logger.info(
+                "loading embedding model '%s'...", self.model_name
+            )
+            start = time.perf_counter()
             model = SentenceTransformer(self.model_name)
             actual_dim = model.get_sentence_embedding_dimension()
             if actual_dim != self._expected_dim:
@@ -96,7 +114,19 @@ class SentenceTransformerEmbedder:
                     f"but EMBEDDING_DIM is set to {self._expected_dim}."
                 )
             self._model = model
+            logger.info(
+                "embedding model loaded in %.2fs",
+                time.perf_counter() - start,
+            )
             return self._model
+
+    def warmup(self) -> None:
+        """Load the model now so the first embedding request is fast.
+
+        Forces the one-time model load (and its log line) up front rather
+        than folding its cost into the first ``embed_query`` call.
+        """
+        self._ensure_model()
 
     @property
     def dim(self) -> int:

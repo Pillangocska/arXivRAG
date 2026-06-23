@@ -99,4 +99,5 @@ def build_agent(settings: Settings) -> RagAgent:
     store = build_store(settings)
     llm = build_llm(settings)
     tools = build_tools(settings, embedder, store)
+    embedder.warmup()
     return RagAgent(llm=llm, tools=tools, settings=settings)

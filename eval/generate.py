@@ -128,7 +128,7 @@ def main() -> int:
         description="Generate a synthetic RAG evaluation set."
     )
     parser.add_argument(
-        "--size", type=int, default=20, help="Number of items to generate."
+        "--size", type=int, default=10, help="Number of items to generate."
     )
     parser.add_argument(
         "--output", default=DEFAULT_OUTPUT, help="Output JSON path."

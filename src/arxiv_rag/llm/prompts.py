@@ -94,8 +94,15 @@ Rules:
 knowledge.
 - Cite sources inline using the arXiv id in the form (arXiv:ID) immediately \
 after the claim they support.
-- If the context is insufficient to fully answer, say so plainly rather than \
-guessing.
+- Answer directly. Do not open with a preamble such as "Based on the \
+provided context" or "Here is what can be said" — state the substantive \
+answer from the first sentence.
+- Do not add meta-commentary about the context or the answer itself (e.g. \
+notes that an excerpt is brief, caveats that the full paper would be needed, \
+or descriptions of what you are about to do). Every sentence should be a \
+substantive, context-supported claim that answers the question.
+- If the context genuinely cannot support part of the answer, say so in one \
+short inline clause at the relevant point rather than in a separate section.
 - Be concise and organized; address every part of the question."""
 
 
@@ -169,7 +176,8 @@ def build_synthesize_user(
     caveat = ""
     if low_confidence:
         caveat = (
-            "\n\nNote: retrieval was weak for part of this question; flag "
-            "any answer that the context does not fully support."
+            "\n\nNote: retrieval was weak for part of this question. Where "
+            "the context does not support an answer, say so in one short "
+            "inline clause; do not add a separate caveat section."
         )
     return f"Question:\n{question}\n\nContext:\n{context}{caveat}"
