@@ -10,9 +10,11 @@ conditional edge), which is the test that proves the loop terminates (see
 ``docs/ADR.md`` sections 3 and 6).
 """
 
-from typing import Dict, List, Any, Iterator
+from typing import Dict, List, Any, Iterator, Optional
 from contextlib import contextmanager
 import time
+
+from pydantic import ValidationError
 
 from arxiv_rag.logging_config import get_logger
 from arxiv_rag.llm.prompts import (
@@ -27,7 +29,7 @@ from arxiv_rag.llm.prompts import (
     GRADE_SYSTEM,
     GRADE_SCHEMA,
 )
-from arxiv_rag.domain import AgentState, SubQuery, Chunk
+from arxiv_rag.domain import AgentState, ArxivQuery, SubQuery, Chunk
 from arxiv_rag.llm import LLMClient
 from arxiv_rag.config import Settings
 from arxiv_rag.tools import Tool
@@ -86,8 +88,38 @@ def parse_subqueries(
             continue
         route = item.get("route")
         route = route if route == "arxiv" else "vector"
-        sub_queries.append(SubQuery(text=text, route=route))
+        arxiv_query: Optional[ArxivQuery] = None
+        if route == "arxiv":
+            arxiv_query = _parse_arxiv_query(item.get("arxiv_query"), text)
+        sub_queries.append(
+            SubQuery(text=text, route=route, arxiv_query=arxiv_query)
+        )
     return sub_queries
+
+
+def _parse_arxiv_query(
+    payload: Optional[Dict[str, Any]], text: str
+) -> ArxivQuery:
+    """Parse the structured arXiv intent for an arxiv-routed sub-query.
+
+    Falls back to a plain keyword lookup over the sub-question text when the
+    model omits or malforms the ``arxiv_query`` object, so the arXiv path
+    always has a usable structured query.
+
+    Args:
+        payload: The ``arxiv_query`` object from the decomposition output,
+            or ``None`` if the model did not emit one.
+        text: The sub-question text, used as the keyword fallback terms.
+
+    Returns:
+        The parsed ``ArxivQuery`` (a keyword query over ``text`` on fallback).
+    """
+    if not isinstance(payload, dict):
+        return ArxivQuery(query_type="keyword", terms=text)
+    try:
+        return ArxivQuery.model_validate(payload)
+    except ValidationError:
+        return ArxivQuery(query_type="keyword", terms=text)
 
 
 def parse_grade(payload: Dict[str, Any]) -> str:
@@ -182,15 +214,40 @@ class AgentNodes:
         with _timed(
             "retrieve", f"[{cursor + 1}] route={sub_query.route}"
         ):
-            chunks: List[Chunk] = (
-                tool.search(sub_query.text, self.settings.top_k)
-                if tool is not None
-                else []
+            chunks: List[Chunk] = self._retrieve_with(
+                tool, sub_query
             )
         logger.info("retrieve -> %d hit(s)", len(chunks))
         sub_query.chunks = chunks
         sub_queries[cursor] = sub_query
         return {"sub_queries": sub_queries}
+
+    def _retrieve_with(
+        self, tool: Optional[Tool], sub_query: SubQuery
+    ) -> List[Chunk]:
+        """Retrieve for a sub-query, passing structured intent when present.
+
+        Vector sub-queries (and any tool exposing only the plain ``Tool``
+        contract) are searched by text. An arxiv-routed sub-query that carries
+        an ``arxiv_query`` is retrieved through the structured path so the
+        live API can apply author/date/id constraints rather than a keyword
+        search (see ``docs/ADR.md`` section 4.7).
+
+        Args:
+            tool: The tool tagged on the sub-query, or ``None`` for an
+                unknown route.
+            sub_query: The sub-query being retrieved for.
+
+        Returns:
+            The retrieved chunks (empty on an unknown route or tool failure).
+        """
+        if tool is None:
+            return []
+        top_k = self.settings.top_k
+        structured_search = getattr(tool, "structured_search", None)
+        if sub_query.arxiv_query is not None and callable(structured_search):
+            return structured_search(sub_query.arxiv_query, top_k)
+        return tool.search(sub_query.text, top_k)
 
     def grade(self, state: AgentState) -> Dict[str, Any]:
         """Grade the relevance of the cursor sub-query's context.
@@ -251,6 +308,14 @@ class AgentNodes:
             ).strip()
         if rewritten:
             sub_query.text = rewritten
+            if sub_query.arxiv_query is not None:
+                # Only keyword/recent queries depend on free-text terms, so
+                # only they benefit from a rewrite. Author and id lookups are
+                # already precise field queries — rephrasing them just dilutes
+                # the field clause with a noisy ``all:`` blob, so leave their
+                # structure intact and let the bounded retry re-run as-is.
+                if sub_query.arxiv_query.query_type in ("keyword", "recent"):
+                    sub_query.arxiv_query.terms = rewritten
         sub_query.retries += 1
         sub_queries[cursor] = sub_query
         return {"sub_queries": sub_queries}

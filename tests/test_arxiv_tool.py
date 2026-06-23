@@ -25,7 +25,9 @@ def test_search_maps_results(monkeypatch) -> None:
     """A successful query maps results to chunks tagged source='arxiv'."""
     tool = ArxivApiTool(timeout=5.0)
     monkeypatch.setattr(
-        tool, "_run_query", lambda q, k: [tool._result_to_chunk(_fake_result())]
+        tool,
+        "_run_query",
+        lambda *a, **k: [tool._result_to_chunk(_fake_result())],
     )
     chunks = tool.search("transformer attention", top_k=3)
     assert len(chunks) == 1
@@ -40,7 +42,7 @@ def test_search_returns_empty_on_error(monkeypatch) -> None:
     """A query that raises degrades to an empty list, not an exception."""
     tool = ArxivApiTool(timeout=5.0)
 
-    def _boom(query: str, top_k: int):
+    def _boom(*args, **kwargs):
         raise ConnectionError("arxiv is down")
 
     monkeypatch.setattr(tool, "_run_query", _boom)
@@ -53,7 +55,7 @@ def test_search_returns_empty_on_timeout(monkeypatch) -> None:
 
     tool = ArxivApiTool(timeout=0.1)
 
-    def _slow(query: str, top_k: int):
+    def _slow(*args, **kwargs):
         time.sleep(1.0)
         return []
 

@@ -17,6 +17,15 @@ Route = Literal["vector", "arxiv"]
 Grade = Literal["good", "weak"]
 """Relevance verdict assigned to a sub-query's retrieved context."""
 
+ArxivQueryType = Literal["author", "id", "recent", "keyword"]
+"""The kind of structured lookup an arXiv sub-query needs.
+
+``author`` searches by author name, ``id`` looks up specific arXiv ids,
+``recent`` favours the latest submissions (optionally bounded by year), and
+``keyword`` is a plain relevance search (the default when no structure
+applies).
+"""
+
 
 class Paper(BaseModel):
     """A single arXiv paper as ingested into the vector store.
@@ -87,6 +96,33 @@ class Chunk(BaseModel):
         return f"{self.title} (arXiv:{self.arxiv_id})"
 
 
+class ArxivQuery(BaseModel):
+    """Structured intent for a sub-query routed to the live arXiv API.
+
+    A free-text sub-question cannot express the field-scoped lookups the arXiv
+    API supports (by author, by id, by recency). This type carries the
+    structure the decomposition step extracts so the tool can build a precise
+    query (e.g. ``au:LeCun`` or ``submittedDate:[...]``) instead of a plain
+    keyword search (see ``docs/ADR.md`` section 4.7).
+
+    Attributes:
+        query_type: Which kind of lookup the sub-query needs.
+        author: Author name to search by (for ``query_type == "author"``).
+        ids: Specific arXiv ids to look up (for ``query_type == "id"``).
+        terms: Topical search terms, used by ``author``/``recent``/``keyword``
+            to narrow results; ignored for ``id``.
+        start_year: Earliest submission year to include, if bounded.
+        end_year: Latest submission year to include, if bounded.
+    """
+
+    query_type: ArxivQueryType = "keyword"
+    author: Optional[str] = None
+    ids: List[str] = Field(default_factory=list)
+    terms: Optional[str] = None
+    start_year: Optional[int] = None
+    end_year: Optional[int] = None
+
+
 class SubQuery(BaseModel):
     """One decomposed part of a user question, with retrieval bookkeeping.
 
@@ -98,6 +134,8 @@ class SubQuery(BaseModel):
     Attributes:
         text: The sub-question text (reformulated on retry).
         route: The tool this sub-query is routed to.
+        arxiv_query: Structured arXiv intent, set only for the ``"arxiv"``
+            route (``None`` for vector sub-queries).
         chunks: Context retrieved for this sub-query.
         grade: Relevance verdict for ``chunks`` (``None`` until graded).
         retries: Number of corrective re-retrievals performed so far.
@@ -105,6 +143,7 @@ class SubQuery(BaseModel):
 
     text: str
     route: Route
+    arxiv_query: Optional[ArxivQuery] = None
     chunks: List[Chunk] = Field(default_factory=list)
     grade: Optional[Grade] = None
     retries: int = 0

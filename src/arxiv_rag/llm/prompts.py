@@ -23,11 +23,24 @@ proposes, or shows; methods; results; comparisons of ideas.
 - "arxiv": the live arXiv API. Use this for questions about *current state*: \
 recent or latest papers, papers by a specific author, or lookups by arXiv id.
 
+For every "arxiv" sub-question, also fill an "arxiv_query" object describing \
+the structured lookup so the live API can be queried precisely:
+- "query_type": one of "author" (papers by a person), "id" (lookup by arXiv \
+id), "recent" (latest/newest papers on a topic), or "keyword" (a plain \
+topical search; the default when none of the others fit).
+- "author": the author's name, for query_type "author".
+- "ids": the arXiv ids to look up, for query_type "id".
+- "terms": the topical search terms (omit the author name and any date \
+words), for "author"/"recent"/"keyword".
+- "start_year"/"end_year": submission-year bounds, when the question names a \
+year or range (e.g. "in 2025" -> start_year 2025, end_year 2025).
+
 Rules:
 - Emit the fewest sub-questions that fully cover the question. A simple, \
 single-intent question yields exactly one sub-question.
 - Each sub-question must be self-contained (resolve pronouns and references).
 - Choose exactly one route per sub-question.
+- Provide "arxiv_query" only for "arxiv" sub-questions; omit it for "vector".
 - Do not invent parts of the question that were not asked."""
 
 
@@ -43,6 +56,27 @@ DECOMPOSE_SCHEMA: Dict[str, Any] = {
                     "route": {
                         "type": "string",
                         "enum": ["vector", "arxiv"],
+                    },
+                    "arxiv_query": {
+                        "type": "object",
+                        "properties": {
+                            "query_type": {
+                                "type": "string",
+                                "enum": [
+                                    "author", "id", "recent", "keyword"
+                                ],
+                            },
+                            "author": {"type": "string"},
+                            "ids": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                            "terms": {"type": "string"},
+                            "start_year": {"type": "integer"},
+                            "end_year": {"type": "integer"},
+                        },
+                        "required": ["query_type"],
+                        "additionalProperties": False,
                     },
                 },
                 "required": ["text", "route"],
@@ -106,6 +140,30 @@ short inline clause at the relevant point rather than in a separate section.
 - Be concise and organized; address every part of the question."""
 
 
+def _chunk_metadata_line(chunk: Chunk) -> str:
+    """Render a chunk's author/date metadata as a context line.
+
+    Author and publication date live in the ``Chunk`` payload, not in the
+    embedded ``text``, so author/date questions (answered via the live arXiv
+    API) need them surfaced explicitly — otherwise the grader and synthesizer
+    cannot confirm "by author X" or "published in year Y" from the abstract
+    alone.
+
+    Args:
+        chunk: The retrieved chunk whose metadata to render.
+
+    Returns:
+        A ``"authors=…; published=…"`` line, or an empty string if neither
+        field is populated.
+    """
+    parts: List[str] = []
+    if chunk.authors:
+        parts.append(f"authors: {', '.join(chunk.authors)}")
+    if chunk.published:
+        parts.append(f"published: {chunk.published}")
+    return " | ".join(parts)
+
+
 def build_decompose_user(question: str) -> str:
     """Build the decomposition user message.
 
@@ -131,10 +189,13 @@ def build_grade_user(sub_query: str, chunks: List[Chunk]) -> str:
     if not chunks:
         context = "(no results were retrieved)"
     else:
-        context = "\n\n".join(
-            f"[{i + 1}] {chunk.title}\n{chunk.text}"
-            for i, chunk in enumerate(chunks)
-        )
+        blocks: List[str] = []
+        for i, chunk in enumerate(chunks):
+            meta = _chunk_metadata_line(chunk)
+            header = f"[{i + 1}] {chunk.title}"
+            header = f"{header}\n{meta}" if meta else header
+            blocks.append(f"{header}\n{chunk.text}")
+        context = "\n\n".join(blocks)
     return (
         f"Sub-question:\n{sub_query}\n\n"
         f"Retrieved context:\n{context}"
@@ -169,10 +230,13 @@ def build_synthesize_user(
     if not chunks:
         context = "(no relevant context was retrieved)"
     else:
-        context = "\n\n".join(
-            f"[{i + 1}] {chunk.title} (arXiv:{chunk.arxiv_id})\n{chunk.text}"
-            for i, chunk in enumerate(chunks)
-        )
+        blocks: List[str] = []
+        for i, chunk in enumerate(chunks):
+            meta = _chunk_metadata_line(chunk)
+            header = f"[{i + 1}] {chunk.title} (arXiv:{chunk.arxiv_id})"
+            header = f"{header}\n{meta}" if meta else header
+            blocks.append(f"{header}\n{chunk.text}")
+        context = "\n\n".join(blocks)
     caveat = ""
     if low_confidence:
         caveat = (

@@ -64,14 +64,52 @@ once, then the system proceeds and flags low confidence rather than looping
 `test_agent_integration.py::test_end_to_end_weak_context_retries_once_then_finishes`
 proves this terminates.
 
+## Example: API only question
+
+When the decomposer decides that the answer can only be answered by using the API, it only directs the query that way:
+
+```
+>  .\make.ps1 run -Q "What papers has Yann LeCun published on arXiv in 2025?"
+2026-06-23 14:33:29 [INFO] arxiv_rag.retrieval.embedder: loading embedding model 'BAAI/bge-small-en-v1.5'...
+2026-06-23 14:33:31 [INFO] arxiv_rag.retrieval.embedder: embedding model loaded in 1.99s
+2026-06-23 14:33:31 [INFO] arxiv_rag.agent.nodes: decompose ...
+2026-06-23 14:33:33 [INFO] arxiv_rag.agent.nodes: decompose done in 1.43s
+2026-06-23 14:33:33 [INFO] arxiv_rag.agent.nodes: decompose -> 1 sub-quer(ies)
+2026-06-23 14:33:33 [INFO] arxiv_rag.agent.nodes: retrieve ... ([1] route=arxiv)
+2026-06-23 14:33:33 [INFO] arxiv_rag.agent.nodes: retrieve done in 0.15s
+2026-06-23 14:33:33 [INFO] arxiv_rag.agent.nodes: retrieve -> 5 hit(s)
+2026-06-23 14:33:33 [INFO] arxiv_rag.agent.nodes: grade ... ([1])
+2026-06-23 14:33:36 [INFO] arxiv_rag.agent.nodes: grade done in 3.06s
+2026-06-23 14:33:36 [INFO] arxiv_rag.agent.nodes: grade -> [1] good
+2026-06-23 14:33:36 [INFO] arxiv_rag.agent.nodes: synthesize ... (5 chunk(s))
+2026-06-23 14:33:45 [INFO] arxiv_rag.agent.nodes: synthesize done in 9.60s
+
+=== answer ===
+
+Based on the provided context, the following papers with Yann LeCun as a co-author have been published on arXiv in 2025:
+
+1. **What Drives Success in Physical Planning with Joint-Embedding Predictive World Models?** — Investigates key technical choices in JEPA-based world models for physical planning, proposing a model that outperforms DINO-WM and V-JEPA-2-AC on navigation and manipulation tasks (arXiv:2512.24497v3).
+
+2. **Value-guided action planning with JEPA world models** — Proposes enhancing planning with JEPA world models by shaping representation space so that a goal-conditioned value function is approximated by a distance between state embeddings, improving planning performance on control tasks (arXiv:2601.00844v1).
+
+3. **SpidR-Adapt: A Universal Speech Representation Model for Few-Shot Adaptation** — Introduces a meta-learning approach for rapid adaptation of speech units to new languages with minimal unlabeled data, achieving 100× greater data efficiency than standard multi-task training (arXiv:2512.21204v2).
+
+4. **World Models for Learning Dexterous Hand-Object Interactions from Human Videos** — Presents DexWM, a world model using finger keypoints from egocentric video to model dexterous hand-object interactions, trained on 900+ hours of data and demonstrating strong zero-shot transfer to robotic tasks (arXiv:2512.13644v2).
+
+5. **VL-JEPA: Joint Embedding Predictive Architecture for Vision-language** — Introduces a vision-language model that predicts continuous text embeddings rather than autoregressively generating tokens, achieving competitive performance with 50% fewer trainable parameters than standard VLMs (arXiv:2512.10942v2).
+
+--- trace ---
+  [1] route=arxiv grade=good retries=0 hits=5
+      q: What papers has Yann LeCun published on arXiv in 2025?
+```
+
 ## Evaluation
 
 Generate a synthetic, corpus-derived eval set and score the agent with Ragas:
 
 ```bash
-make eval                  # = eval-generate (size 10) + eval-run
-# or control the size:
-make eval-generate EVAL_SIZE=50
+make eval                       # = eval-generate (size 10) + eval-run
+make eval-generate EVAL_SIZE=50 # or control the size:
 make eval-run
 ```
 

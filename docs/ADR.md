@@ -4,8 +4,8 @@
 
 Researchers and practitioners need to answer questions over scientific literature that mix two fundamentally different information needs:
 
-1. **What does the existing literature say?** — questions answered by the *content* of papers (claims, methods, results). This is a semantic-search / retrieval problem.
-2. **What is the current state?** — questions about recent publications, papers by a given author, or lookups by ID. This is a *live structured-data* problem that a static index cannot answer.
+1. **What does the existing literature say?** - questions answered by the *content* of papers (claims, methods, results). This is a semantic-search / retrieval problem.
+2. **What is the current state?** - questions about recent publications, papers by a given author, or lookups by ID. This is a *live structured-data* problem that a static index cannot answer.
 
 A pure RAG system handles (1) and fails (2); a question that bundles both ("what does paper X claim, and what newer work improves on it?") cannot be answered by a single retrieval pass. This motivated a hybrid design where retrieval is one tool among several that an agent orchestrates.
 
@@ -15,8 +15,8 @@ A pure RAG system handles (1) and fails (2); a question that bundles both ("what
 
 The defining idea: paper content lives in a vector store and is served by RAG; current/structured state is served by the live arXiv API; an agent decides, per sub-question, which source is needed. The agent adds two behaviors a linear RAG pipeline lacks:
 
-- **Query decomposition** — multi-part questions are split into sub-queries, each routed independently. This is what makes the hybrid design *necessary* rather than decorative: different sub-queries genuinely require different tools.
-- **Corrective retrieval** — retrieved context is graded for relevance; weak context triggers a single, bounded re-retrieval before synthesis.
+- **Query decomposition** - multi-part questions are split into sub-queries, each routed independently. This is what makes the hybrid design *necessary* rather than decorative: different sub-queries genuinely require different tools.
+- **Corrective retrieval** - retrieved context is graded for relevance; weak context triggers a single, bounded re-retrieval before synthesis.
 
 Decomposition is the backbone (it exercises both tools); corrective retrieval is a bounded safeguard layered inside each sub-query's retrieval. This hierarchy keeps the system implementable within the time budget while still demonstrating two agentic patterns.
 
@@ -88,7 +88,7 @@ A hand-rolled orchestration was considered. For a single linear RAG pass it woul
 
 - **State:** `AgentState` (sub-queries, results, grades, retry counts, final answer).
 - **Tools:** `vector_search(query, filters) → chunks` (RAG path); `arxiv_api(query_type, params) → papers` (live path, wrapped with timeout + error handling for graceful degradation).
-- **Routing:** the tool for each sub-query is tagged during decomposition (cheaper than a separate routing LLM call).
+- **Routing:** the tool for each sub-query is tagged during decomposition (cheaper than a separate routing LLM call). For arXiv-routed sub-queries the decomposition step also emits a structured `arxiv_query` (`query_type` of author/id/recent/keyword plus params), which the tool translates into arXiv field syntax — `au:"…"`, `id_list`, and a `submittedDate:[…]` range — rather than a plain keyword search, so author/date/id lookups hit the right results and recency queries sort newest-first.
 - **Bounding:** sub-queries capped at ~3; corrective retry capped at 1; on exhausted retry the system proceeds and flags low confidence rather than looping.
 
 ## 5. Trade-offs considered
@@ -129,16 +129,3 @@ Evaluation has two layers.
 These localize failures: context precision/recall judge retrieval; faithfulness/answer-relevance judge generation.
 
 **Agent-workflow tests** — routing correctness (query → expected tool), decomposition correctness (expected sub-query coverage), and corrective-loop behavior (fires on weak context, stops after one retry).
-
-## 7. Summary of decisions
-
-| Decision        | Choice                        | Primary reason                                  |
-|-----------------|-------------------------------|-------------------------------------------------|
-| Approach        | Hybrid RAG + Agentic          | Two genuine information needs (content vs. live) |
-| Orchestration   | LangGraph                     | Cyclic, conditional control flow                 |
-| Vector store    | Qdrant (local)                | Native metadata filtering + local->prod parity   |
-| Embeddings      | BGE-small (local)             | Quality at laptop scale, solid for POCs          |
-| Chunking        | None (one abstract = one unit)| Abstracts are short, self-contained              |
-| LLM (synthesis) | Sonnet 4.6                    | Faithfulness on the user-facing answer           |
-| LLM (decompose/grade) | Haiku 4.5               | Cheap, high-frequency, simple judgments          |
-| Generation      | API; embeddings local         | Quality/latency where it matters; offline retrieval |
