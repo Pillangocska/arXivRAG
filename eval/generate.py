@@ -14,10 +14,13 @@ import random
 import json
 import os
 
+from arxiv_rag.logging_config import configure_logging, get_logger
 from arxiv_rag.llm.client import AnthropicLLMClient
 from arxiv_rag.ingestion.corpus import load_papers
 from arxiv_rag.config import get_settings, Settings
 from arxiv_rag.domain import Paper
+
+logger = get_logger(__name__)
 
 
 QGEN_SYSTEM = """\
@@ -97,7 +100,7 @@ def generate(
                 schema=QGEN_SCHEMA,
             )
         except Exception as exc:  # noqa: BLE001 - skip a bad generation
-            print(f"  [{i}] skipped ({exc})", flush=True)
+            logger.warning("[%d] skipped (%s)", i, exc)
             continue
         items.append(
             {
@@ -106,12 +109,12 @@ def generate(
                 "arxiv_id": paper.arxiv_id,
             }
         )
-        print(f"  [{i}/{len(papers)}] generated", flush=True)
+        logger.info("[%d/%d] generated", i, len(papers))
 
     os.makedirs(os.path.dirname(output) or ".", exist_ok=True)
     with open(output, "w", encoding="utf-8") as handle:
         json.dump(items, handle, indent=2)
-    print(f"Wrote {len(items)} items to {output}", flush=True)
+    logger.info("Wrote %d items to %s", len(items), output)
     return items
 
 
@@ -132,9 +135,10 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    configure_logging()
     settings = get_settings()
     if not settings.anthropic_api_key:
-        print("ANTHROPIC_API_KEY is not set. Add it to your .env file.")
+        logger.error("ANTHROPIC_API_KEY is not set. Add it to your .env file.")
         return 1
     generate(settings, args.size, args.output)
     return 0

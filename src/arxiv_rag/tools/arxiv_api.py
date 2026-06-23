@@ -10,7 +10,10 @@ crashing the agent (graceful degradation, section 4.7).
 from typing import List, Any
 import concurrent.futures
 
+from arxiv_rag.logging_config import get_logger
 from arxiv_rag.domain import Chunk
+
+logger = get_logger(__name__)
 
 
 class ArxivApiTool:
@@ -75,13 +78,12 @@ class ArxivApiTool:
                 future = executor.submit(self._run_query, query, top_k)
                 return future.result(timeout=self._timeout)
         except concurrent.futures.TimeoutError:
-            print(
-                f"[arxiv_api] query timed out after {self._timeout}s",
-                flush=True,
+            logger.warning(
+                "query timed out after %ss", self._timeout
             )
             return []
         except Exception as exc:  # noqa: BLE001 - graceful degradation
-            print(f"[arxiv_api] query failed: {exc}", flush=True)
+            logger.warning("query failed: %s", exc)
             return []
 
     @staticmethod

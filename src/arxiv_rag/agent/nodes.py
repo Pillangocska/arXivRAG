@@ -10,8 +10,11 @@ conditional edge), which is the test that proves the loop terminates (see
 ``docs/ADR.md`` sections 3 and 6).
 """
 
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Iterator
+from contextlib import contextmanager
+import time
 
+from arxiv_rag.logging_config import get_logger
 from arxiv_rag.llm.prompts import (
     build_synthesize_user,
     build_reformulate_user,
@@ -28,6 +31,34 @@ from arxiv_rag.domain import AgentState, SubQuery, Chunk
 from arxiv_rag.llm import LLMClient
 from arxiv_rag.config import Settings
 from arxiv_rag.tools import Tool
+
+logger = get_logger(__name__)
+
+
+@contextmanager
+def _timed(stage: str, detail: str = "") -> Iterator[None]:
+    """Log the start and elapsed time of a pipeline stage.
+
+    Emits one ``INFO`` line when the stage begins and another when it ends,
+    the latter carrying the wall-clock duration in seconds. Keeps per-stage
+    timing logging to a single ``with`` block at each call site.
+
+    Args:
+        stage: The stage name shown in the log (e.g. ``"decompose"``).
+        detail: Optional context appended to the start line (e.g. the
+            sub-query being routed).
+
+    Yields:
+        Control to the wrapped block; timing is logged on exit.
+    """
+    suffix = f" ({detail})" if detail else ""
+    logger.info("%s ...%s", stage, suffix)
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        elapsed = time.perf_counter() - start
+        logger.info("%s done in %.2fs", stage, elapsed)
 
 
 def parse_subqueries(
@@ -116,17 +147,19 @@ class AgentNodes:
         system = DECOMPOSE_SYSTEM.format(
             max_subqueries=self.settings.max_subqueries
         )
-        payload = self._llm.complete_json(
-            model=self.settings.grader_model,
-            system=system,
-            user=build_decompose_user(question),
-            schema=DECOMPOSE_SCHEMA,
-        )
-        sub_queries = parse_subqueries(
-            payload, self.settings.max_subqueries
-        )
-        if not sub_queries:
-            sub_queries = [SubQuery(text=question, route="vector")]
+        with _timed("decompose"):
+            payload = self._llm.complete_json(
+                model=self.settings.grader_model,
+                system=system,
+                user=build_decompose_user(question),
+                schema=DECOMPOSE_SCHEMA,
+            )
+            sub_queries = parse_subqueries(
+                payload, self.settings.max_subqueries
+            )
+            if not sub_queries:
+                sub_queries = [SubQuery(text=question, route="vector")]
+        logger.info("decompose -> %d sub-quer(ies)", len(sub_queries))
         return {"sub_queries": sub_queries, "cursor": 0}
 
     def retrieve(self, state: AgentState) -> Dict[str, Any]:
@@ -146,11 +179,15 @@ class AgentNodes:
         sub_query = sub_queries[cursor]
 
         tool = self._tools.get(sub_query.route)
-        chunks: List[Chunk] = (
-            tool.search(sub_query.text, self.settings.top_k)
-            if tool is not None
-            else []
-        )
+        with _timed(
+            "retrieve", f"[{cursor + 1}] route={sub_query.route}"
+        ):
+            chunks: List[Chunk] = (
+                tool.search(sub_query.text, self.settings.top_k)
+                if tool is not None
+                else []
+            )
+        logger.info("retrieve -> %d hit(s)", len(chunks))
         sub_query.chunks = chunks
         sub_queries[cursor] = sub_query
         return {"sub_queries": sub_queries}
@@ -174,14 +211,18 @@ class AgentNodes:
         if not sub_query.chunks:
             sub_query.grade = "weak"
         else:
-            payload = self._llm.complete_json(
-                model=self.settings.grader_model,
-                system=GRADE_SYSTEM,
-                user=build_grade_user(sub_query.text, sub_query.chunks),
-                schema=GRADE_SCHEMA,
-            )
-            sub_query.grade = parse_grade(payload)
+            with _timed("grade", f"[{cursor + 1}]"):
+                payload = self._llm.complete_json(
+                    model=self.settings.grader_model,
+                    system=GRADE_SYSTEM,
+                    user=build_grade_user(
+                        sub_query.text, sub_query.chunks
+                    ),
+                    schema=GRADE_SCHEMA,
+                )
+                sub_query.grade = parse_grade(payload)
 
+        logger.info("grade -> [%d] %s", cursor + 1, sub_query.grade)
         sub_queries[cursor] = sub_query
         return {"sub_queries": sub_queries}
 
@@ -202,11 +243,12 @@ class AgentNodes:
         cursor = state["cursor"]
         sub_query = sub_queries[cursor]
 
-        rewritten = self._llm.complete(
-            model=self.settings.grader_model,
-            system=REFORMULATE_SYSTEM,
-            user=build_reformulate_user(sub_query.text),
-        ).strip()
+        with _timed("reformulate", f"[{cursor + 1}] retry"):
+            rewritten = self._llm.complete(
+                model=self.settings.grader_model,
+                system=REFORMULATE_SYSTEM,
+                user=build_reformulate_user(sub_query.text),
+            ).strip()
         if rewritten:
             sub_query.text = rewritten
         sub_query.retries += 1
@@ -249,14 +291,15 @@ class AgentNodes:
                 seen.add(chunk.arxiv_id)
                 chunks.append(chunk)
 
-        answer = self._llm.complete(
-            model=self.settings.synth_model,
-            system=SYNTHESIZE_SYSTEM,
-            user=build_synthesize_user(
-                state["question"], chunks, low_confidence
-            ),
-            max_tokens=2048,
-        )
+        with _timed("synthesize", f"{len(chunks)} chunk(s)"):
+            answer = self._llm.complete(
+                model=self.settings.synth_model,
+                system=SYNTHESIZE_SYSTEM,
+                user=build_synthesize_user(
+                    state["question"], chunks, low_confidence
+                ),
+                max_tokens=2048,
+            )
         return {"answer": answer, "low_confidence": low_confidence}
 
     def should_retry(self, state: AgentState) -> str:

@@ -10,8 +10,11 @@ from typing import Iterator, Iterable, List
 
 from arxiv_rag.retrieval import Embedder, VectorStore
 from arxiv_rag.ingestion.corpus import load_papers
+from arxiv_rag.logging_config import get_logger
 from arxiv_rag.config import Settings
 from arxiv_rag.domain import Paper
+
+logger = get_logger(__name__)
 
 
 def _batched(
@@ -69,6 +72,6 @@ def ingest(
         )
         store.upsert(batch, vectors)
         total += len(batch)
-        print(f"  ingested {total} papers...", flush=True)
+        logger.info("ingested %d papers...", total)
 
     return total

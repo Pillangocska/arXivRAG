@@ -13,7 +13,6 @@ Run via ``python -m arxiv_rag.app <subcommand>`` or the ``arxiv-rag`` script.
 from typing import Optional, List
 import warnings
 import argparse
-import sys
 
 # LangGraph's checkpoint package emits a LangChainPendingDeprecationWarning
 # about ``allowed_objects`` at import time, before any of our code runs.
@@ -24,8 +23,11 @@ warnings.filterwarnings(
     category=Warning,
 )
 
+from arxiv_rag.logging_config import configure_logging, get_logger
 from arxiv_rag.config import get_settings, Settings
 from arxiv_rag.domain import AgentState
+
+logger = get_logger(__name__)
 
 
 def _cmd_ingest(settings: Settings) -> int:
@@ -40,26 +42,27 @@ def _cmd_ingest(settings: Settings) -> int:
     from arxiv_rag.factory import build_embedder, build_store
     from arxiv_rag.ingestion import ingest
 
-    print(
-        f"Ingesting category '{settings.arxiv_category}' "
-        f"(max {settings.max_papers}) from {settings.corpus_path}",
-        flush=True,
+    logger.info(
+        "Ingesting category '%s' (max %d) from %s",
+        settings.arxiv_category,
+        settings.max_papers,
+        settings.corpus_path,
     )
     embedder = build_embedder(settings)
     store = build_store(settings)
     try:
         total = ingest(settings, embedder, store)
     except FileNotFoundError:
-        print(
-            f"Corpus not found at {settings.corpus_path}. Download the "
-            "arXiv metadata JSON from Kaggle and set CORPUS_PATH.",
-            file=sys.stderr,
+        logger.error(
+            "Corpus not found at %s. Download the arXiv metadata JSON "
+            "from Kaggle and set CORPUS_PATH.",
+            settings.corpus_path,
         )
         return 1
-    print(
-        f"Done. Indexed {total} papers into "
-        f"'{settings.qdrant_collection}'.",
-        flush=True,
+    logger.info(
+        "Done. Indexed %d papers into '%s'.",
+        total,
+        settings.qdrant_collection,
     )
     return 0
 
@@ -80,7 +83,9 @@ def _print_trace(state: AgentState) -> None:
         )
         print(f"      q: {sub_query.text}", flush=True)
     if state.get("low_confidence"):
-        print("  (!) low confidence: weak context for part of the query.")
+        logger.warning(
+            "low confidence: weak context for part of the query."
+        )
 
 
 def _cmd_ask(settings: Settings, question: str) -> int:
@@ -96,9 +101,8 @@ def _cmd_ask(settings: Settings, question: str) -> int:
     from arxiv_rag.factory import build_agent
 
     if not settings.anthropic_api_key:
-        print(
-            "ANTHROPIC_API_KEY is not set. Add it to your .env file.",
-            file=sys.stderr,
+        logger.error(
+            "ANTHROPIC_API_KEY is not set. Add it to your .env file."
         )
         return 1
 
@@ -142,6 +146,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     Returns:
         A process exit code.
     """
+    configure_logging()
     parser = build_parser()
     args = parser.parse_args(argv)
     settings = get_settings()

@@ -13,8 +13,11 @@ import argparse
 import json
 import os
 
+from arxiv_rag.logging_config import configure_logging, get_logger
 from arxiv_rag.config import get_settings, Settings
 from arxiv_rag.factory import build_agent
+
+logger = get_logger(__name__)
 
 DEFAULT_INPUT = "eval/eval_set.json"
 RESULTS_DIR = "eval/results"
@@ -67,7 +70,7 @@ def _run_agent(
                 "reference": item["reference_answer"],
             }
         )
-        print(f"  [{i}/{len(items)}] answered", flush=True)
+        logger.info("[%d/%d] answered", i, len(items))
     return records
 
 
@@ -130,24 +133,25 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    configure_logging()
     settings = get_settings()
     if not settings.anthropic_api_key:
-        print("ANTHROPIC_API_KEY is not set. Add it to your .env file.")
+        logger.error("ANTHROPIC_API_KEY is not set. Add it to your .env file.")
         return 1
     if not os.path.exists(args.input):
-        print(
-            f"Eval set not found at {args.input}. "
-            "Run `python -m eval.generate` first."
+        logger.error(
+            "Eval set not found at %s. Run `python -m eval.generate` first.",
+            args.input,
         )
         return 1
 
     with open(args.input, "r", encoding="utf-8") as handle:
         items = json.load(handle)
 
-    print(f"Running agent over {len(items)} questions...", flush=True)
+    logger.info("Running agent over %d questions...", len(items))
     records = _run_agent(settings, items)
 
-    print("Scoring with Ragas...", flush=True)
+    logger.info("Scoring with Ragas...")
     result = _score(records, settings)
     scores = {k: float(v) for k, v in result._repr_dict.items()} if hasattr(
         result, "_repr_dict"
@@ -163,7 +167,7 @@ def main() -> int:
     print("\n=== Ragas scores ===", flush=True)
     for metric, value in scores.items():
         print(f"  {metric}: {value:.3f}", flush=True)
-    print(f"\nWrote results to {output}", flush=True)
+    logger.info("Wrote results to %s", output)
     return 0
 
 
