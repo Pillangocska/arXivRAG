@@ -216,3 +216,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- arXiv Hybrid RAG project-specific ---
+# Corpus + downloaded model weights (large, not version-controlled)
+data/
+_data/
+.cache/
+# Local Qdrant storage (when run without docker volume)
+qdrant_storage/
+# Eval run outputs
+eval/results/

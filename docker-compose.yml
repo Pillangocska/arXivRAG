@@ -1,0 +1,33 @@
+# Runs the app alongside Qdrant. Qdrant is reachable from the app container at
+# http://qdrant:6333 (the compose service name) — set via the `environment`
+# block below, so no change to your .env is needed for the containerized path.
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.12.1
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+
+  app:
+    build: .
+    depends_on:
+      - qdrant
+    environment:
+      # Override the Qdrant endpoint to the compose service name.
+      - QDRANT_URL=http://qdrant:6333
+    env_file:
+      - .env
+    volumes:
+      # Mount the corpus read-only and persist the embedding-model cache.
+      - ./_data:/app/_data:ro
+      - hf_cache:/app/.cache/huggingface
+    # No long-running process by default; `make` targets pass the command.
+    profiles:
+      - cli
+
+volumes:
+  qdrant_storage:
+  hf_cache:
